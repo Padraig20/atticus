@@ -1,12 +1,45 @@
 [project]
 name = "atticus"
 version = "0.1.0"
-description = "Genotype preparation and gene embeddings for atticus"
+description = "Cell-type-specific expression prediction, distillation, and TWAS with ATTICUS"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = []
 
 [project.optional-dependencies]
+notebooks = [
+    "ipykernel>=6.29,<8",
+    "jupyterlab>=4.3,<5",
+    "matplotlib>=3.9,<4",
+    "nbclient>=0.10,<1",
+    "nbformat>=5.10,<6",
+]
+distillation = [
+    "bed-reader>=1.0,<2",
+    "h5py>=3.11,<4",
+    "numpy>=1.26,<3",
+    "scikit-learn>=1.5,<1.7",
+    "scipy>=1.13,<2",
+    "threadpoolctl>=3.5,<4",
+    "torch==2.8.0",
+    "wandb>=0.23.1,<1",
+]
+training = [
+    "anndata>=0.11,<0.13",
+    "numpy>=1.26,<3",
+    "scipy>=1.13,<2",
+    "torch==2.8.0",
+    "wandb>=0.23.1,<1",
+]
+twas = [
+    "bed-reader>=1.0,<2",
+    "h5py>=3.11,<4",
+    "numpy>=1.26,<3",
+    "pandas>=2.2,<3",
+    "scipy>=1.13,<2",
+    "threadpoolctl>=3.5,<4",
+    "wandb>=0.23.1,<1",
+]
 variantformer = [
     "variantformer",
     "torch==2.8.0",

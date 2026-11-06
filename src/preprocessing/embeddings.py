@@ -2,28 +2,72 @@
 
 import argparse
 import json
+import logging
 from pathlib import Path
 import re
 import sys
 
-from geuvadis import ROOT, read_ids, run
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from src.preprocessing.geuvadis import ROOT, read_ids, run
 
 
-def select_genes(genes, requested=None):
-    genes = genes[genes.chromosome.isin([f"chr{i}" for i in range(1, 23)])].copy()
-    genes["ensid"] = genes.gene_id.str.split(".").str[0]
-    genes = genes.set_index("ensid", drop=False)
-    if requested is not None:
-        requested = [gene.split(".")[0] for gene in requested]
-        if len(requested) != len(set(requested)):
-            raise ValueError("Gene list contains duplicate Ensembl IDs")
-        missing = set(requested) - set(genes.index)
-        if missing:
-            raise ValueError(f"Genes absent from VariantFormer's autosomal protein-coding set: {sorted(missing)}")
-        genes = genes.loc[requested]
-    if genes.empty:
-        raise ValueError("No genes selected")
-    return genes.reset_index(drop=True)
+CORE_ASSETS = (
+    "all_genes_v1_pcg_gencodeV24.csv", "pretrained_tokenizers_checkpoint.pth",
+    "v4_pcg_epoch11_checkpoint.pth", "ENCFF234XEZ.bed.gz",
+    "GRCh38_no_alt_analysis_set_GCA_000001405.15.fasta.gz",
+)
+EMBEDDING_FIELDS = {"format_version", "features", "ensids", "gene_ids", "chroms", "tss",
+                    "sample_id", "tissue", "embedding_provenance"}
+
+
+def asset_fingerprints(directory):
+    """Record fixed model assets without hashing multi-gigabyte checkpoints."""
+    result = {}
+    for name in CORE_ASSETS:
+        stat = (Path(directory) / name).stat()
+        result[name] = [stat.st_size, stat.st_mtime_ns]
+    return result
+
+
+def read_provenance(archive):
+    """Validate native metadata; null provenance fields explicitly mean unknown."""
+    if not EMBEDDING_FIELDS <= set(archive) or archive["format_version"].item() != 1:
+        raise ValueError("Expected a native format_version=1 embedding NPZ with complete metadata and provenance")
+    try:
+        provenance = json.loads(str(archive["embedding_provenance"].item()))
+        if (not isinstance(provenance, dict) or set(provenance) != {"tissue", "model", "variantformer", "assets"}
+                or any(value is not None and (not isinstance(value, str) or not value)
+                       for key, value in provenance.items() if key != "assets")):
+            raise ValueError
+        assets = provenance["assets"]
+        if assets is not None:
+            if not isinstance(assets, dict) or set(assets) != set(CORE_ASSETS):
+                raise ValueError
+            for fingerprint in assets.values():
+                if (len(fingerprint) != 2
+                        or any(not isinstance(value, int) or value < 0 for value in fingerprint)):
+                    raise ValueError
+        if (str(archive["tissue"].item()) or None) != provenance["tissue"]:
+            raise ValueError
+    except (ValueError, TypeError, KeyError, AttributeError) as error:
+        raise ValueError("Invalid embedding provenance in archive") from error
+    return provenance
+
+
+def validate_provenance(expected, actual):
+    keys = {"tissue", "model", "variantformer", "assets"}
+    if not isinstance(expected, dict) or set(expected) != keys or set(actual) != keys:
+        raise ValueError("Expected native embedding provenance with explicit unknown fields")
+    if any(actual[key] != value for key, value in expected.items() if value is not None):
+        raise ValueError("Embedding provenance is missing or differs from the teacher's reference embeddings")
+
+
+def warn_incomplete_provenance(provenance):
+    unknown = [key for key, value in provenance.items() if value is None]
+    if unknown:
+        logging.warning("Embedding provenance is unknown for %s; recorded fields are checked", ", ".join(unknown))
 
 
 def validate_vcf(path, sample):
@@ -39,12 +83,26 @@ def validate_vcf(path, sample):
     run("bcftools", "index", "-n", path, capture_output=True)
 
 
+def prepare_output(output, config):
+    """Resume only archives whose inputs are recorded in the same manifest."""
+    output.mkdir(parents=True, exist_ok=True)
+    manifest = output / "run.json"
+    if manifest.exists():
+        if json.loads(manifest.read_text()) != config:
+            raise ValueError("Embedding inputs changed; use a new --output directory")
+        return
+    if any(not path.name.endswith(".partial.npz") for path in output.glob("*.npz")):
+        raise ValueError("Embedding archives exist without run.json; use a new --output directory")
+    temporary = output / "run.json.partial"
+    temporary.write_text(json.dumps(config, indent=2) + "\n")
+    temporary.replace(manifest)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tissue", required=True, help="VariantFormer tissue name, e.g. blood")
     parser.add_argument("--reference", action="store_true", help="Use the unmodified GRCh38 reference")
-    parser.add_argument("--genes", type=Path, help="Ensembl IDs, one per line (default: all autosomal protein-coding genes)")
-    parser.add_argument("--samples", type=Path, default=ROOT / "data/1000G_EUR_503.txt")
+    parser.add_argument("--samples", type=Path, default=ROOT / "data/data-for-the-paper/1000G_EUR_503.txt")
     parser.add_argument("--vcf-dir", type=Path, default=ROOT / "data/geuvadis/individuals")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--batch-size", type=int, default=8)
@@ -71,23 +129,26 @@ def main():
     processor = VCFProcessor(model_class="v4_pcg")
     if args.tissue not in processor.get_tissues():
         parser.error(f"Unknown tissue. Choose from: {', '.join(processor.get_tissues())}")
-    genes = select_genes(processor.get_genes(), read_ids(args.genes) if args.genes else None)
+    genes = processor.get_genes()
+    genes = genes.loc[genes.chromosome.isin([f"chr{i}" for i in range(1, 23)])].copy().reset_index(drop=True)
+    if genes.empty:
+        raise ValueError("No autosomal protein-coding genes available")
+    genes["ensid"] = genes.gene_id.str.split(".").str[0]
     query = genes[["gene_id"]].assign(tissues=args.tissue)
     output = args.output or ROOT / "data/embeddings" / (
         "reference" if args.reference else "geuvadis"
     ) / re.sub(r"[^a-zA-Z0-9_-]+", "_", args.tissue)
-    output.mkdir(parents=True, exist_ok=True)
-    config = {
-        "tissue": args.tissue, "genes": genes.gene_id.tolist(), "samples": samples,
-        "model": "v4_pcg",
+    provenance = {
+        "tissue": args.tissue, "model": "v4_pcg",
         "variantformer": run("git", "-C", vf, "rev-parse", "HEAD", capture_output=True, text=True).stdout.strip(),
+        "assets": asset_fingerprints(vf / "_artifacts"),
+    }
+    config = {
+        **provenance, "genes": genes.gene_id.tolist(), "samples": samples,
         "vcfs": {sample: [str(path), path.stat().st_size, path.stat().st_mtime_ns]
                  for sample, path in vcfs.items()},
     }
-    manifest = output / "run.json"
-    if manifest.exists() and json.loads(manifest.read_text()) != config:
-        parser.error("Embedding inputs changed; use a new --output directory")
-    manifest.write_text(json.dumps(config, indent=2) + "\n")
+    prepare_output(output, config)
     pending = [sample for sample in samples if not (output / f"{sample}.npz").exists()]
     if not pending:
         print(f"Embeddings already complete: {output}")
@@ -109,11 +170,12 @@ def main():
             raise ValueError(f"Non-finite embeddings for {sample}")
         temporary = output / f"{sample}.partial.npz"
         np.savez_compressed(
-            temporary, features=features, ensids=genes.ensid.to_numpy(dtype=str),
+            temporary, format_version=1, features=features, ensids=genes.ensid.to_numpy(dtype=str),
             gene_ids=genes.gene_id.to_numpy(dtype=str),
             chroms=genes.chromosome.to_numpy(dtype=str),
             tss=np.where(genes.strand == "+", genes.start, genes.end),
             sample_id=sample, tissue=args.tissue,
+            embedding_provenance=json.dumps(provenance, sort_keys=True),
         )
         temporary.replace(output / f"{sample}.npz")
     print(f"Embeddings saved to {output}")

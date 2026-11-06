@@ -122,7 +122,7 @@ def split_individuals(vcfs, samples_file, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--samples", type=Path, default=ROOT / "data/1000G_EUR_503.txt")
+    parser.add_argument("--samples", type=Path, default=ROOT / "data/data-for-the-paper/1000G_EUR_503.txt")
     parser.add_argument("--output", type=Path, default=ROOT / "data/geuvadis")
     parser.add_argument("--threads", type=int, default=4)
     args = parser.parse_args()
