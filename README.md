@@ -110,5 +110,5 @@ uv run --extra twas python src/twas/run.py -m models/onek1k \
 If you found this useful, you'd make us very happy by citing us!
 
 ```
-(available when Preprint is online)
+(coming soon)
 ```

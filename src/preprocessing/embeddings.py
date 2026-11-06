@@ -1,6 +1,7 @@
 """Extract VariantFormer protein-coding gene embeddings for one tissue."""
 
 import argparse
+from contextlib import contextmanager
 import json
 import logging
 from pathlib import Path
@@ -20,6 +21,54 @@ CORE_ASSETS = (
 )
 EMBEDDING_FIELDS = {"format_version", "features", "ensids", "gene_ids", "chroms", "tss",
                     "sample_id", "tissue", "embedding_provenance"}
+PERSONALIZED_ARRAYS = ("features", "ensids", "chroms", "tss")
+
+
+def personalized_path(directory, sample):
+    """Prefer a native archive, falling back to a per-individual array directory."""
+    directory = Path(directory)
+    archive = directory / f"{sample}.npz"
+    arrays = directory / sample
+    return arrays if not archive.is_file() and arrays.is_dir() else archive
+
+
+def personalized_files(path):
+    """List every file required for a personalized embedding input."""
+    path = Path(path)
+    return [path / f"{name}.npy" for name in PERSONALIZED_ARRAYS] if path.is_dir() else [path]
+
+
+@contextmanager
+def load_personalized(path):
+    """Read native NPZs or trusted legacy directories with pickled metadata arrays.
+
+    Legacy sample identity comes from the directory name. Unrecorded tissue and
+    backbone provenance remain unknown; known teacher metadata must still match.
+    Features are memory-mapped without pickle, and views keep their mapping alive.
+    """
+    import numpy as np
+
+    path = Path(path)
+    if not path.is_dir():
+        with np.load(path, allow_pickle=False) as archive:
+            yield archive
+        return
+    missing = [file for file in personalized_files(path) if not file.is_file()]
+    if missing:
+        raise FileNotFoundError(f"Incomplete personalized embeddings: {missing}")
+    metadata = {name: np.load(path / f"{name}.npy", allow_pickle=True)
+                for name in PERSONALIZED_ARRAYS if name != "features"}
+    genes = np.asarray(metadata["ensids"], dtype=str)
+    yield {
+        "format_version": np.asarray(1),
+        "features": np.load(path / "features.npy", mmap_mode="r", allow_pickle=False),
+        "ensids": genes, "gene_ids": genes,
+        "chroms": np.asarray(metadata["chroms"], dtype=str),
+        "tss": np.asarray(metadata["tss"], dtype=np.float64),
+        "sample_id": np.asarray(path.name), "tissue": np.asarray(""),
+        "embedding_provenance": np.asarray(json.dumps(
+            dict.fromkeys(("tissue", "model", "variantformer", "assets")))),
+    }
 
 
 def asset_fingerprints(directory):

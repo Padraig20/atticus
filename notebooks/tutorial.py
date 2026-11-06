@@ -12,8 +12,8 @@ REFERENCE = ROOT / "data/onek1k/embeddings/reference/REFERENCE.npz"
 PATHS = {
     "expression": ROOT / "data/onek1k/expression.h5ad",
     "reference": (REFERENCE if REFERENCE.is_file()
-                  else ROOT / "data/embeddings/reference/blood/REFERENCE.npz"),
-    "personalized": ROOT / "data/embeddings/geuvadis/blood",
+                  else ROOT / "data/embeddings/reference/REFERENCE.npz"),
+    "personalized": ROOT / "data/onek1k/embeddings/geuvadis",
     "samples": ROOT / "data/geuvadis/samples.txt",
     "genotypes": ROOT / "data/geuvadis/plink",
     "output": OUTPUT,

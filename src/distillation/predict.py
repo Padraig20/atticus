@@ -14,7 +14,10 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.preprocessing.geuvadis import ROOT, read_ids
-from src.preprocessing.embeddings import read_provenance, validate_provenance, warn_incomplete_provenance
+from src.preprocessing.embeddings import (
+    load_personalized, personalized_files, personalized_path,
+    read_provenance, validate_provenance, warn_incomplete_provenance,
+)
 from src.training.model import DeepEnsemble, validate_checkpoint
 from src.tracking import Tracker, add_tracking_args
 
@@ -23,6 +26,11 @@ def fingerprint(path):
     path = Path(path).resolve()
     stat = path.stat()
     return [str(path), stat.st_size, stat.st_mtime_ns]
+
+
+def embedding_fingerprint(path):
+    return ([fingerprint(file) for file in personalized_files(path)]
+            if Path(path).is_dir() else fingerprint(path))
 
 
 def strings(group, name, values):
@@ -46,13 +54,13 @@ def export_predictions(teacher, embeddings, samples, output, batch_size=256, dev
     samples = list(samples)
     if len(samples) < 5 or len(set(samples)) != len(samples) or "REFERENCE" in samples:
         raise ValueError("Distillation requires at least five unique personalized samples")
-    paths = [Path(embeddings) / f"{sample}.npz" for sample in samples]
-    with np.load(paths[0], allow_pickle=False) as first:
+    paths = [personalized_path(embeddings, sample) for sample in samples]
+    with load_personalized(paths[0]) as first:
         source_genes, source_chroms, source_tss = embedding_metadata(first)
         tissue = str(first["tissue"].item())
         provenance = read_provenance(first)
     config = {"embedding_format_version": 1, "teacher_format_version": 2,
-              "teacher": fingerprint(teacher), "embeddings": [fingerprint(p) for p in paths],
+              "teacher": fingerprint(teacher), "embeddings": [embedding_fingerprint(p) for p in paths],
               "samples": samples}
     config_json = json.dumps(config, sort_keys=True)
     output = Path(output)
@@ -74,6 +82,8 @@ def export_predictions(teacher, embeddings, samples, output, batch_size=256, dev
     reference_provenance = checkpoint["data"]["embedding_provenance"]
     validate_provenance(reference_provenance, provenance)
     warn_incomplete_provenance(reference_provenance)
+    if provenance != reference_provenance:
+        warn_incomplete_provenance(provenance)
     model = DeepEnsemble(**checkpoint["model_config"]).to(device).eval()
     model.load_state_dict(checkpoint["model_state_dict"])
     cell_types = checkpoint["data"]["cell_types"]
@@ -109,7 +119,7 @@ def export_predictions(teacher, embeddings, samples, output, batch_size=256, dev
         progress_every = max(1, (len(samples) + 99) // 100)
         console_every = max(1, (len(samples) + 24) // 25)
         for i in range(completed_before, len(samples)):
-            with np.load(paths[i], allow_pickle=False) as data:
+            with load_personalized(paths[i]) as data:
                 metadata = embedding_metadata(data)
                 if read_provenance(data) != provenance:
                     raise ValueError(f"Embedding provenance differs between personalized individuals: {paths[i]}")
@@ -163,7 +173,8 @@ def export_predictions(teacher, embeddings, samples, output, batch_size=256, dev
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--teacher", type=Path, required=True)
-    parser.add_argument("--embeddings", type=Path, required=True, help="Directory of personalized <sample>.npz files")
+    parser.add_argument("--embeddings", type=Path, required=True,
+                        help="Directory of personalized <sample>.npz files or trusted <sample>/*.npy directories")
     parser.add_argument("--samples", type=Path, default=ROOT / "data/geuvadis/samples.txt")
     parser.add_argument("-o", "--output", type=Path, required=True)
     parser.add_argument("--batch-size", type=int, default=256)

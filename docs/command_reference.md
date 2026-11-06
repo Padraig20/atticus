@@ -39,7 +39,7 @@ uv run --no-sync --extra variantformer python src/preprocessing/embeddings.py \
   --tissue blood --reference --output data/onek1k/embeddings/reference
 uv run --no-sync --extra variantformer python src/preprocessing/embeddings.py \
   --tissue blood --samples data/geuvadis/samples.txt \
-  --vcf-dir data/geuvadis/individuals --output data/embeddings/geuvadis/blood
+  --vcf-dir data/geuvadis/individuals --output data/onek1k/embeddings/geuvadis
 ```
 
 Reference and personalized embeddings must use the same tissue and backbone.
@@ -95,7 +95,7 @@ Export personalized teacher predictions, then fit genotype-based students:
 ```bash
 uv run --no-sync --extra distillation python src/distillation/predict.py \
   --teacher outputs/atticus-v-blood.pth \
-  --embeddings data/embeddings/geuvadis/blood \
+  --embeddings data/onek1k/embeddings/geuvadis \
   -o outputs/geuvadis-blood-teacher.h5
 
 uv run --no-sync --extra distillation python src/distillation/run.py \
@@ -104,7 +104,11 @@ uv run --no-sync --extra distillation python src/distillation/run.py \
 ```
 
 Prediction defaults to `data/geuvadis/samples.txt`. Each sample needs a matching
-`<sample>.npz`; all archives must agree on gene, TSS, tissue, and backbone metadata.
+`<sample>.npz` or a trusted `<sample>/` directory containing `features.npy`,
+`ensids.npy`, `chroms.npy`, and `tss.npy`. Native archives take precedence.
+Legacy directory metadata uses Python pickle; unrecorded tissue and backbone
+details remain unknown. All inputs must agree on gene, TSS, tissue, and backbone
+metadata, and known teacher provenance must match.
 For OneK1K predictions, change `--embeddings` and `--samples` to its individual
 embedding directory and sample list. Distillation requires matching genotypes.
 
