@@ -5,6 +5,7 @@
 [![Jupyter tutorials](https://img.shields.io/badge/Jupyter-tutorials-F37626?logo=jupyter&logoColor=white)](#try-it-out)
 [![OneK1K data on Hugging Face](https://img.shields.io/badge/Hugging%20Face-data-FFD21E?logo=huggingface)](https://huggingface.co/datasets/Padraig7/atticus-onek1k)
 [![Pretrained models on Hugging Face](https://img.shields.io/badge/Hugging%20Face-models-FFD21E?logo=huggingface)](https://huggingface.co/Padraig7/atticus-onek1k)
+[![TWAS Summary Statistics](https://img.shields.io/badge/Hugging%20Face-summary%20statistics-FFD21E?logo=huggingface)](https://huggingface.co/datasets/Padraig7/atticus-summary-stats)
 
 **Personalised gene expression prediction and uncertainty-aware TWAS.** 
 
