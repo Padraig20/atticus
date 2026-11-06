@@ -3,6 +3,7 @@
 from pathlib import Path
 import shlex
 import subprocess
+from urllib.parse import quote
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +20,13 @@ PATHS = {
     "teacher": OUTPUT / "teacher.pth",
     "predictions": OUTPUT / "geuvadis-teacher.h5",
 }
+
+
+def paths_for_cell_type(cell_type):
+    """Share inputs while keeping each demonstration's outputs together."""
+    output = OUTPUT / quote(cell_type.replace(" ", "_"), safe="")
+    return {**PATHS, "output": output, "teacher": output / "teacher.pth",
+            "predictions": output / "geuvadis-teacher.h5"}
 
 
 def run(command, execute=False):
@@ -69,11 +77,12 @@ def load_native_checkpoint(path):
     return checkpoint
 
 
-def student_draw_count(students):
+def student_draw_count(students, cell=None):
     """Read the draw axes from a saved fit; return None before any fit is saved."""
     for gene in students["genes"].values():
-        for cell in gene.values():
-            if "coefficient_draws" in cell:
-                members, bootstraps, _ = cell["coefficient_draws"].shape
+        groups = gene.values() if cell is None else [gene.get(str(cell))]
+        for group in groups:
+            if group is not None and "coefficient_draws" in group:
+                members, bootstraps, _ = group["coefficient_draws"].shape
                 return members * bootstraps
     return None

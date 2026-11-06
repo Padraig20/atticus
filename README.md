@@ -93,7 +93,8 @@ Choose the **Python (ATTICUS)** kernel, then follow the notebooks in order:
 | [04 · TWAS](notebooks/04_twas.ipynb) | Call the bundled MetaXcan S-PrediXcan and explore association summaries. |
 
 Start with `EXECUTE = False` to preview commands; switch to `True` when ready to go.
-Outputs go under `outputs/tutorial/onek1k/`. This walkthrough uses OneK1K blood
+Set `CELL_TYPE` in the first code cell of notebooks 02–04; the demonstration uses **memory B cells**.
+Outputs go under `outputs/tutorial/onek1k/<cell-type>/`. This walkthrough uses OneK1K blood
 models for both GWASs; ROSMAP data is not publicly available, sorry!
 
 To jump straight to TWAS, use the supplied **`models/onek1k`** (blood, download first).

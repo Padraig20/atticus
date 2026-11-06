@@ -22,7 +22,20 @@ CREATE TABLE extra (gene TEXT, genename TEXT, "n.snps.in.model" INTEGER,
 '''
 
 
-def student_file_config(handle, path):
+def cell_type_indices(handle, cell_type=None):
+    """Keep file indices when selecting a label; accept spaces or underscores."""
+    cells = handle["cell_types"].asstr()[:].tolist()
+    if cell_type is None:
+        return list(range(len(cells)))
+    if cell_type in cells:
+        return [cells.index(cell_type)]
+    matches = [i for i, name in enumerate(cells) if name.replace("_", " ") == cell_type.replace("_", " ")]
+    if len(matches) != 1:
+        raise ValueError(f"Unknown or ambiguous cell type {cell_type!r}; choose from: {', '.join(cells)}")
+    return matches
+
+
+def student_file_config(handle, path, cell_type=None):
     """Describe native weight shards and scientific settings without reading weights."""
     config = json.loads(handle["config"].asstr()[()])
     result = {"model_settings": config["model_settings"]} if "model_settings" in config else {}
@@ -33,23 +46,24 @@ def student_file_config(handle, path):
         if (len(paths) != len(handle["cell_types"]) or len(set(paths)) != len(paths)
                 or any(not value or Path(value).is_absolute() or ".." in Path(value).parts for value in paths)):
             raise ValueError("Expected one distinct, model-relative weight shard per cell type")
-        result["student_files"] = [fingerprint(Path(path).parent / value) for value in paths]
+        result["student_files"] = [fingerprint(Path(path).parent / paths[i])
+                                   for i in cell_type_indices(handle, cell_type)]
     return result
 
 
 @contextmanager
-def open_students(path):
+def open_students(path, cell_type=None):
     """Keep native shards open while following the root file's HDF5 links."""
     with ExitStack() as stack:
         handle = stack.enter_context(h5py.File(path, "r"))
-        for entry in student_file_config(handle, path).get("student_files", []):
+        for entry in student_file_config(handle, path, cell_type).get("student_files", []):
             shard = stack.enter_context(h5py.File(entry[0], "r"))
             if shard.attrs.get("format_version") != 1 or not shard.attrs.get("complete", False):
                 raise ValueError(f"Incomplete or unsupported native weight shard: {entry[0]}")
         yield handle
 
 
-def inspect_students(handle, require_nonzero=True):
+def inspect_students(handle, require_nonzero=True, cell_type=None):
     if handle.attrs.get("format_version") != 1 or not handle.attrs.get("complete", False):
         raise ValueError("Expected completed native students.h5")
     config = json.loads(handle["config"].asstr()[()])
@@ -62,6 +76,7 @@ def inspect_students(handle, require_nonzero=True):
     samples, cells = (handle[key].asstr()[:].tolist() for key in ("sample_ids", "cell_types"))
     if len(samples) < 2 or len(set(samples)) != len(samples) or not cells or len(set(cells)) != len(cells):
         raise ValueError("Student sample IDs and cell types must be unique and nonempty")
+    indices = cell_type_indices(handle, cell_type)
     genes = sorted(handle["genes"])
     if not genes:
         raise ValueError("Students contain no genes")
@@ -80,7 +95,8 @@ def inspect_students(handle, require_nonzero=True):
             raise ValueError(f"Unknown student status for {gene}: {status}")
         item = {"chrom": chrom, "tss": int(group.attrs["tss"]), "status": status, "catalog": {}}
         if status == "fitted":
-            for cell, name in enumerate(cells):
+            for cell in indices:
+                name = cells[cell]
                 if shards is not None:
                     link = group.get(str(cell), getlink=True)
                     if (not isinstance(link, h5py.ExternalLink) or link.filename != shards[cell]
@@ -105,7 +121,7 @@ def inspect_students(handle, require_nonzero=True):
         plan[gene] = item
     if require_nonzero and not catalog:
         raise ValueError("Students contain no nonzero projected SNP weights to test")
-    return mode, shape, samples, cells, plan, catalog
+    return mode, shape, samples, [cells[i] for i in indices], plan, catalog
 
 
 def draw_name(member, bootstrap):
@@ -126,10 +142,12 @@ def external_covariance_config(handle, path, cells, shape, plan):
         return {}
     paths = handle["covariance_paths"].asstr()[:]
     order = handle["covariance_gene_order"].asstr()[:].tolist()
-    if paths.shape != (len(cells), *shape) or len(set(order)) != len(order) or set(plan) - set(order):
+    all_cells = handle["cell_types"].asstr()[:].tolist()
+    if paths.shape != (len(all_cells), *shape) or len(set(order)) != len(order) or set(plan) - set(order):
         raise ValueError("External covariance paths or gene order do not match the students")
     if any(not entry or Path(entry).is_absolute() or ".." in Path(entry).parts for entry in paths.flat):
         raise ValueError("Expected model-relative covariance paths")
+    paths = paths[[all_cells.index(name) for name in cells]]
     return {"covariance_source": "external_metaxcan_text",
             "covariance_files": [fingerprint(Path(path).parent / entry) for entry in paths.flat],
             "covariance_gene_order": [gene for gene in order if gene in plan]}

@@ -60,6 +60,9 @@ uv run --no-sync --extra training python src/training/run.py \
   -o outputs/atticus-v-blood.pth
 ```
 
+Add `--cell-type 'memory B cell'` to train one cell type. The tutorials use this
+smaller demonstration, configured by `CELL_TYPE` in the first code cell of notebooks 02–04.
+
 This reserves the listed evaluation donors. Omit `--held-out-individuals` for
 the default seeded 80/20 donor split (`--split-seed 42`). Validation uses genes
 on chromosomes 7, 11 and 14; test genes on 5, 12 and 20 stay reserved. Fitting
@@ -141,6 +144,8 @@ This calls the bundled **MetaXcan S-PrediXcan**, which handles SNP matching,
 allele alignment, and association statistics. Model settings are read from
 `students.h5`; saved weights and covariance are reused, so PLINK files are no
 longer needed. `--jobs` controls concurrent MetaXcan processes (default 1).
+Add `--cell-type 'memory B cell'` to test just that cell type, including with
+pretrained models; spaces and underscores in model labels are interchangeable.
 For another GWAS, keep `--models` and choose a new output directory.
 
 ### Use the pretrained OneK1K or ROSMAP models

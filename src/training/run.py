@@ -28,6 +28,7 @@ def parse_args(argv=None):
     parser.add_argument("-y", "--targets", type=Path, required=True,
                         help="Raw pseudo-bulk .h5ad with obs individual_id/cell_type and Ensembl var_names")
     parser.add_argument("-o", "--output", type=Path, required=True, help="Output checkpoint (.pth)")
+    parser.add_argument("--cell-type", help="Train only this expression cell-type label (default: all)")
     parser.add_argument("--seed", type=int, default=0, help="Model/training seed; cell c, member k uses seed + 5*c + k")
     parser.add_argument("--split-seed", type=int, default=42, help="Fixed 80/20 donor split, independent of --seed")
     parser.add_argument("--held-out-individuals", type=Path,
@@ -136,7 +137,7 @@ def main(argv=None):
     device = torch.device(("cuda" if torch.cuda.is_available() else "cpu") if args.device == "auto" else args.device)
     with Tracker(args, stage="training") as tracker:
         train_data, validation_data, metadata = load_training_data(
-            args.observations, args.targets, args.split_seed, args.held_out_individuals)
+            args.observations, args.targets, args.split_seed, args.held_out_individuals, args.cell_type)
         logging.info("Using %d training individuals; reserving %d individuals. Genes: %d train / %d validation / %d held out",
                      len(metadata["training_individuals"]), len(metadata["held_out_individuals"]),
                      *(len(metadata["genes"][name]) for name in ("train", "validation", "test")))

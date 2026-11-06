@@ -21,7 +21,7 @@ from src.preprocessing.geuvadis import ROOT
 from src.tracking import Tracker, add_tracking_args
 from src.twas.gwas import read_gwas, write_gwas
 from src.twas.metaxcan import NUMERIC, run_spredixcan, source_hash
-from src.twas.models import (draw_name, export_cell, export_config, external_covariance_config,
+from src.twas.models import (cell_type_indices, draw_name, export_cell, export_config, external_covariance_config,
                              initialize_cache, inspect_students, open_students, student_file_config)
 from src.twas.reference import LDReference, fingerprint
 from src.twas.statistics import benjamini_hochberg_log, summarize_draws
@@ -40,6 +40,7 @@ def parse_args(argv=None):
     parser.add_argument("--gwas", type=Path, required=True,
                         help="GWAS TSV[.gz]; defaults match data/data-for-the-paper/gwas/gwas-*.tsv.gz")
     parser.add_argument("-o", "--output", type=Path, required=True)
+    parser.add_argument("--cell-type", help="Test only this cell type; spaces/underscores are interchangeable (default: all)")
     parser.add_argument("--genotypes", type=Path,
                         help=f"Rebuild LD from {TEMPLATE}.bed/.bim/.fam in this directory instead of using saved covariance")
     parser.add_argument("--model-cache", type=Path,
@@ -123,8 +124,9 @@ def main(argv=None):
     metaxcan = ROOT / "metaxcan/software"
     if args.models.is_dir():
         args.models = args.models / "students.h5"
-    with Tracker(args, "twas") as tracker, open_students(args.models) as students, threadpool_limits(limits=1):
-        mode, shape, samples, cells, plan, catalog = inspect_students(students)
+    with Tracker(args, "twas") as tracker, open_students(args.models, args.cell_type) as students, threadpool_limits(limits=1):
+        mode, shape, samples, cells, plan, catalog = inspect_students(students, cell_type=args.cell_type)
+        cell_indices = cell_type_indices(students, args.cell_type)
         tracker.configure({"distillation_mode": mode, "n_genes": len(plan), "n_cell_types": len(cells),
                            "n_ld_individuals": len(samples), "n_draws": int(np.prod(shape))})
         chromosomes = sorted({item["chrom"] for item in plan.values() if item["catalog"]}, key=int)
@@ -138,9 +140,11 @@ def main(argv=None):
             genotype_files = [fingerprint(args.genotypes / f"{TEMPLATE.format(chrom=chrom)}.{ext}")
                               for chrom in chromosomes for ext in ("bed", "bim", "fam")]
         default_cache = args.models.parent / "models" if stored else args.output / "models"
+        if stored and len(cells) < len(students["cell_types"]):
+            default_cache = args.models.parent / f"models-cell-{cell_indices[0]:04d}"
         args.model_cache = (args.model_cache or default_cache).resolve()
         model_config = export_config(args.models, mode, shape, samples, cells, plan, genotype_files, stored=stored)
-        model_config.update(student_file_config(students, args.models))
+        model_config.update(student_file_config(students, args.models, args.cell_type))
         if stored:
             model_config.update(external_covariance_config(students, args.models, cells, shape, plan))
         ordered = model_config["covariance_source"] == "external_metaxcan_text"
@@ -197,8 +201,8 @@ def main(argv=None):
             draw_writer = csv.DictWriter(draws_file, DRAW_FIELDS, delimiter="\t", lineterminator="\n")
             summary_writer.writeheader()
             draw_writer.writeheader()
-            for cell, name in enumerate(cells):
-                logging.info("Preparing MetaXcan models for %s (%d / %d)", name, cell + 1, len(cells))
+            for completed_cells, (cell, name) in enumerate(zip(cell_indices, cells), start=1):
+                logging.info("Preparing MetaXcan models for %s (%d / %d)", name, completed_cells, len(cells))
                 label = f"cell_{cell:04d}"
                 draws = export_cell(students, cell, shape, plan, reference, args.model_cache / label)
 
@@ -218,7 +222,7 @@ def main(argv=None):
                 manifest["multiple_testing"][name] = correction
                 tested_pairs += sum(row["n_draws_tested"] > 0 for row in summary)
                 tested_draws += sum(row["n_draws_tested"] for row in summary)
-                tracker.log({"progress/cell_types_completed": cell + 1, "cell_type": name,
+                tracker.log({"progress/cell_types_completed": completed_cells, "cell_type": name,
                              "twas/tested_genes": correction["tested_genes"],
                              "twas/significant_bonferroni": correction["significant_bonferroni"],
                              "twas/significant_fdr": correction["significant_fdr"]})

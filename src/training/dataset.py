@@ -95,7 +95,7 @@ class ReferenceDataset(Dataset):
                                 self.observed[:, cell:cell + 1], self.gene_indices)
 
 
-def load_training_data(observations, targets, split_seed=42, held_out_individuals=None):
+def load_training_data(observations, targets, split_seed=42, held_out_individuals=None, cell_type=None):
     """Exclude held-out donors and test-gene expression before loading targets.
 
     Reading selected rows in chunks avoids densifying the complete h5ad. The
@@ -115,6 +115,10 @@ def load_training_data(observations, targets, split_seed=42, held_out_individual
         held_out = read_ids(held_out_individuals) if held_out_individuals is not None else None
         train_ids, held_out_ids = split_individuals(donors, split_seed, held_out)
         cell_types = sorted(set(labels))
+        if cell_type is not None:
+            if cell_type not in cell_types:
+                raise ValueError(f"Unknown cell type {cell_type!r}; choose from: {', '.join(cell_types)}")
+            cell_types = [cell_type]
         target_genes = gene_ids(adata.var_names)
         target_index = {gene: i for i, gene in enumerate(target_genes)}
         aligned = np.asarray([gene in target_index for gene in genes])
@@ -132,7 +136,7 @@ def load_training_data(observations, targets, split_seed=42, held_out_individual
         cell_index = {label: i for i, label in enumerate(cell_types)}
         expression = np.zeros((len(train_ids), len(genes), len(cell_types)), dtype=np.float32)
         observed = np.zeros((len(train_ids), len(cell_types)), dtype=bool)
-        rows = np.flatnonzero(np.isin(donors, train_ids))
+        rows = np.flatnonzero(np.isin(donors, train_ids) & np.isin(labels, cell_types))
         for start in range(0, len(rows), 256):
             selected = rows[start:start + 256]
             block = adata[selected, :].X[:, target_columns]
